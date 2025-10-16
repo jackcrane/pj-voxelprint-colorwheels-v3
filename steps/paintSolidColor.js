@@ -25,32 +25,15 @@ export const paintSolidColor = (ctx, x, y) => {
   //   [_cyanThreshold, _magentaThreshold, _yellowThreshold],
   // ]);
 
-  const whiteThreshold = Math.random();
-  if (whiteThreshold > colorInHsv[1]) {
-    const blackThreshold = Math.random();
-    if (blackThreshold > colorInHsv[2]) {
-      const randomNumberThreshold = Math.random();
-      if (randomNumberThreshold < 0.33) {
-        ctx.fillStyle = config.colors.cyan;
-      } else if (randomNumberThreshold < 0.66) {
-        ctx.fillStyle = config.colors.magenta;
-      } else {
-        ctx.fillStyle = config.colors.yellow;
-      }
-    } else {
-      ctx.fillStyle = config.colors.white;
-    }
+  const totalThreshold = cyanThreshold + magentaThreshold + yellowThreshold;
+  // Avoid division by zero; default to cyan when hue data is unavailable.
+  const threshold = totalThreshold > 0 ? Math.random() * totalThreshold : 0;
+  if (threshold < cyanThreshold) {
+    ctx.fillStyle = config.colors.cyan;
+  } else if (threshold < magentaThreshold + cyanThreshold) {
+    ctx.fillStyle = config.colors.magenta;
   } else {
-    const threshold = Math.random();
-    if (threshold < cyanThreshold) {
-      ctx.fillStyle = config.colors.cyan;
-    } else if (threshold < magentaThreshold + cyanThreshold) {
-      ctx.fillStyle = config.colors.magenta;
-    } else if (threshold < yellowThreshold + magentaThreshold + cyanThreshold) {
-      ctx.fillStyle = config.colors.yellow;
-    } else {
-      ctx.fillStyle = config.colors.clear;
-    }
+    ctx.fillStyle = config.colors.yellow;
   }
   ctx.fillRect(x, y, 1, 1);
 

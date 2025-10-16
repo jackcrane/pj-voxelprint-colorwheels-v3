@@ -34,7 +34,7 @@ const ctx = canvas.getContext("2d");
 const wideCanvas = createCanvas(config.x * 2, config.y);
 const wideCtx = wideCanvas.getContext("2d");
 
-for (let i = 0; i < 37 * 2; i++) {
+for (let i = 0; i < 100; i++) {
   // Clear the canvas so we start with a fresh state.
   ctx.clearRect(0, 0, config.x, config.y);
 
