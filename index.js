@@ -76,7 +76,7 @@ for (let i = 0; i < 100; i++) {
   //   saveCanvas(frameName, "layers", wideCanvas);
   // }
   const frameName = i.toString().padStart(4, "0");
-  saveCanvas(frameName, "layers", wideCanvas);
+  saveCanvas("layer_" + frameName, "layers", wideCanvas);
 
   const endTime = performance.now();
   console.log(i, endTime - startTime);
