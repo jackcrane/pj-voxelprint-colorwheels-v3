@@ -1,12 +1,15 @@
 {
-  "name": "perceptual",
-  "version": "1.0.0",
-  "main": "index.js",
+  "name": "color-opt",
+  "type": "module",
+  "private": true,
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "refs": "node scripts/01_build_references.js",
+    "eval": "node scripts/02_evaluate_baseline.js",
+    "opt": "node scripts/03_optimize_clut.js",
+    "export": "node scripts/04_export_profile.js",
+    "gen_lab_nodes": "node scripts/05_generate_lab_nodes.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": ""
+  "dependencies": {
+    "chalk": "^5.3.0"
+  }
 }
