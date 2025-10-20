@@ -10,6 +10,7 @@
     "gen_lab_nodes": "node scripts/05_generate_lab_nodes.js"
   },
   "dependencies": {
-    "chalk": "^5.3.0"
+    "chalk": "^5.3.0",
+    "sharp": "^0.34.4"
   }
 }
