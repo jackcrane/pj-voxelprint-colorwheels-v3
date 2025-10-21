@@ -1,25 +1,33 @@
 #!/bin/sh
 set -euo pipefail
 
+# ============================================
+# CONFIG — single bump amount for sweep combos
+# Change here or override with: --bump=0.2  or  BUMP_AMOUNT=0.2 ./run_profiles.sh ...
+BUMP_AMOUNT_DEFAULT="0.2"
+# ============================================
+
 # run_profiles.sh — convert/dither/scale/build pipeline + optional CMY bump sweep
 #
 # Usage:
-#   ./run_profiles.sh [out_root] [source_image] [--gen=convert|gencolor] [--sweep] [--layers=N]
+#   ./run_profiles.sh [out_root] [source_image] [--gen=convert|gencolor] [--sweep] [--layers=N] [--bump=0.2]
 #
 # Defaults:
 #   out_root     = out
 #   source_image = input.png (ignored if --gen=gencolor)
 #   --gen        = convert   | gencolor
 #   --layers     = 100 (only used for --sweep)
+#   --bump       = $BUMP_AMOUNT_DEFAULT
 #
 # In --sweep mode:
 #   - Generates pre.png (convert/gencolor)
-#   - Runs halftone.js across combos: c, m, y, cm, cy, my, cmy (each +0.1)
-#   - Writes to: <out_root>/<combo>-01/
+#   - Runs index.js across combos: c, m, y, cm, cy, my, cmy
+#   - Each included channel gets +BUMP_AMOUNT
+#   - Outputs to: <out_root>/<combo>-NN/  (NN = bump*10, e.g., 0.2 → 02)
 #   - Scales each folder's PNGs (2x X, point filter)
 #
 # Env overrides (optional):
-#   GEN=convert|gencolor   HALFTONE_JS=./halftone.js  PROFILE=...icm
+#   GEN=convert|gencolor   HALFTONE_JS=./index.js  PROFILE=...icm  BUMP_AMOUNT=0.2
 
 OUT_ROOT="${1:-out}"
 SOURCE_IMAGE_DEFAULT="input.png"
@@ -32,17 +40,19 @@ GEN="${GEN_CHOICE_ENV:-${GEN_CHOICE_FLAG:-convert}}"   # convert | gencolor
 
 SWEEP=0
 LAYERS=100
+BUMP_AMOUNT="${BUMP_AMOUNT:-$BUMP_AMOUNT_DEFAULT}"
 for arg in "$@"; do
   case "$arg" in
     --sweep) SWEEP=1 ;;
     --layers=*) LAYERS="${arg#--layers=}" ;;
+    --bump=*) BUMP_AMOUNT="${arg#--bump=}" ;;
   esac
 done
 
 CONVERT="./convert.sh"
 GENCOLOR="./gencolor.sh"
 DITHER="./dither.sh"
-HALFTONE_JS="${HALFTONE_JS:-./halftone.js}"
+HALFTONE_JS="${HALFTONE_JS:-./index.js}"
 PROFILE="${PROFILE:-../shared/profiles/Stratasys_J750_Vivid_CMY_1mm.icm}"
 
 # --- sanity checks ---
@@ -71,9 +81,15 @@ PRE_WORK_ROOT="$OUT_ROOT"               # where we put final outputs
 WORK_DIR="$OUT_ROOT/$SAFE_NAME"         # only used for non-sweep path
 PREPNG="$WORK_DIR/pre.png"
 
-echo "==> Profile:  $BASE"
+# derive two-digit suffix from bump (0.2 -> 02, 0.3 -> 03)
+# round to nearest tenth: int(bump*10 + 0.5)
+# requires awk (standard on macOS/Linux)
+BUMP_TENTHS="$(awk "BEGIN{printf \"%d\", ($BUMP_AMOUNT*10)+0.5}")"
+SUFFIX="$(printf '%02d' "$BUMP_TENTHS")"
+
+echo "==> Profile:   $BASE"
 echo "==> Generator: $GEN"
-[ "$SWEEP" -eq 1 ] && echo "==> Mode:     SWEEP (layers=$LAYERS)" || echo "==> Mode:     STANDARD"
+[ "$SWEEP" -eq 1 ] && echo "==> Mode:      SWEEP (layers=$LAYERS, bump=$BUMP_AMOUNT -> suffix -$SUFFIX)" || echo "==> Mode:      STANDARD"
 
 # --- generate pre.png via selected generator ---
 if [ "$SWEEP" -eq 1 ]; then
@@ -87,17 +103,16 @@ if [ "$SWEEP" -eq 1 ]; then
     *) echo "Unknown generator: $GEN (expected: convert or gencolor)" >&2; exit 1 ;;
   esac
 
-  # ---- bump sweep: c, m, y, cm, cy, my, cmy (+0.1 each) ----
+  # ---- bump sweep: c, m, y, cm, cy, my, cmy ----
   combos="c m y cm cy my cmy"
   for combo in $combos; do
-    # build bumps
-    bump_c=0.0; bump_m=0.0; bump_y=0.0
-    echo "$combo" | grep -q "c" && bump_c=0.1 || true
-    echo "$combo" | grep -q "m" && bump_m=0.1 || true
-    echo "$combo" | grep -q "y" && bump_y=0.1 || true
+    bump_c="0.0"; bump_m="0.0"; bump_y="0.0"
+    echo "$combo" | grep -q "c" && bump_c="$BUMP_AMOUNT" || true
+    echo "$combo" | grep -q "m" && bump_m="$BUMP_AMOUNT" || true
+    echo "$combo" | grep -q "y" && bump_y="$BUMP_AMOUNT" || true
 
-    outdir="$PRE_WORK_ROOT/${combo}-01"
-    echo "==> Halftone ${combo}-01  (c=$bump_c m=$bump_m y=$bump_y) -> $outdir"
+    outdir="$PRE_WORK_ROOT/${combo}-${SUFFIX}"
+    echo "==> Halftone ${combo}-${SUFFIX}  (c=$bump_c m=$bump_m y=$bump_y) -> $outdir"
     rm -rf "$outdir"
     mkdir -p "$outdir"
 
@@ -113,7 +128,7 @@ if [ "$SWEEP" -eq 1 ]; then
     done
   done
 
-  echo "Done. Outputs in $PRE_WORK_ROOT/<combo>-01/"
+  echo "Done. Outputs in $PRE_WORK_ROOT/<combo>-${SUFFIX}/"
   exit 0
 fi
 
