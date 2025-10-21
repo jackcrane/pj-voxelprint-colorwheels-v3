@@ -1,158 +1,54 @@
 #!/bin/sh
 set -euo pipefail
 
-# ============================================
-# CONFIG — single bump amount for sweep combos
-# Change here or override with: --bump=0.2  or  BUMP_AMOUNT=0.2 ./run_profiles.sh ...
-BUMP_AMOUNT_DEFAULT="0.2"
-# ============================================
-
-# run_profiles.sh — convert/dither/scale/build pipeline + optional CMY bump sweep
+# run_profiles.sh — convert → dither → scale (2x in X) for a single profile
 #
 # Usage:
-#   ./run_profiles.sh [out_root] [source_image] [--gen=convert|gencolor] [--sweep] [--layers=N] [--bump=0.2]
-#
+#   ./run_profiles.sh [out_root] [source_image]
 # Defaults:
 #   out_root     = out
-#   source_image = input.png (ignored if --gen=gencolor)
-#   --gen        = convert   | gencolor
-#   --layers     = 100 (only used for --sweep)
-#   --bump       = $BUMP_AMOUNT_DEFAULT
+#   source_image = input.png
 #
-# In --sweep mode:
-#   - Generates pre.png (convert/gencolor)
-#   - Runs index.js across combos: c, m, y, cm, cy, my, cmy
-#   - Each included channel gets +BUMP_AMOUNT
-#   - Outputs to: <out_root>/<combo>-NN/  (NN = bump*10, e.g., 0.2 → 02)
-#   - Scales each folder's PNGs (2x X, point filter)
-#
-# Env overrides (optional):
-#   GEN=convert|gencolor   HALFTONE_JS=./index.js  PROFILE=...icm  BUMP_AMOUNT=0.2
+# Notes:
+# - Always uses convert.sh (no sweep, no gencolor)
+# - Keeps PNGs sharp by using point filter, png24, no interlace
 
 OUT_ROOT="${1:-out}"
-SOURCE_IMAGE_DEFAULT="input.png"
-SOURCE_IMAGE="${2:-$SOURCE_IMAGE_DEFAULT}"
-
-# --- option parsing ---
-GEN_CHOICE_ENV="${GEN:-}"
-GEN_CHOICE_FLAG="$(printf '%s' "${3:-}" | sed -n 's/^--gen=\(.*\)$/\1/p')"
-GEN="${GEN_CHOICE_ENV:-${GEN_CHOICE_FLAG:-convert}}"   # convert | gencolor
-
-SWEEP=0
-LAYERS=100
-BUMP_AMOUNT="${BUMP_AMOUNT:-$BUMP_AMOUNT_DEFAULT}"
-for arg in "$@"; do
-  case "$arg" in
-    --sweep) SWEEP=1 ;;
-    --layers=*) LAYERS="${arg#--layers=}" ;;
-    --bump=*) BUMP_AMOUNT="${arg#--bump=}" ;;
-  esac
-done
+SOURCE_IMAGE="${2:-input.png}"
 
 CONVERT="./convert.sh"
-GENCOLOR="./gencolor.sh"
 DITHER="./dither.sh"
-HALFTONE_JS="${HALFTONE_JS:-./index.js}"
-PROFILE="${PROFILE:-../shared/profiles/Stratasys_J750_Vivid_CMY_1mm.icm}"
+PROFILE="../shared/profiles/Stratasys_J750_Vivid_CMY_1mm.icm"
 
 # --- sanity checks ---
-if [ ! -f "$PROFILE" ]; then
-  echo "Profile not found: $PROFILE" >&2
-  exit 1
-fi
+[ -f "$PROFILE" ] || { echo "Profile not found: $PROFILE" >&2; exit 1; }
+[ -f "$SOURCE_IMAGE" ] || { echo "Source image not found: $SOURCE_IMAGE" >&2; exit 1; }
+command -v magick >/dev/null 2>&1 || { echo "ImageMagick 'magick' not found in PATH." >&2; exit 1; }
 
-if ! command -v magick >/dev/null 2>&1; then
-  echo "ImageMagick 'magick' CLI not found in PATH." >&2
-  exit 1
-fi
-
-# Only require SOURCE_IMAGE when using convert
-if [ "$GEN" = "convert" ] && [ ! -f "$SOURCE_IMAGE" ]; then
-  echo "Source image not found: $SOURCE_IMAGE" >&2
-  exit 1
-fi
-
-mkdir -p "$OUT_ROOT"
-
-BASE=$(basename "$PROFILE")
+# --- paths ---
+BASE="$(basename "$PROFILE")"
 NAME="${BASE%.*}"
-SAFE_NAME=$(printf '%s' "$NAME" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
-PRE_WORK_ROOT="$OUT_ROOT"               # where we put final outputs
-WORK_DIR="$OUT_ROOT/$SAFE_NAME"         # only used for non-sweep path
+SAFE_NAME="$(printf '%s' "$NAME" | tr ' ' '_' | tr -cd '[:alnum:]_.-')"
+
+WORK_DIR="$OUT_ROOT/$SAFE_NAME"
 PREPNG="$WORK_DIR/pre.png"
 
-# derive two-digit suffix from bump (0.2 -> 02, 0.3 -> 03)
-# round to nearest tenth: int(bump*10 + 0.5)
-# requires awk (standard on macOS/Linux)
-BUMP_TENTHS="$(awk "BEGIN{printf \"%d\", ($BUMP_AMOUNT*10)+0.5}")"
-SUFFIX="$(printf '%02d' "$BUMP_TENTHS")"
-
-echo "==> Profile:   $BASE"
-echo "==> Generator: $GEN"
-[ "$SWEEP" -eq 1 ] && echo "==> Mode:      SWEEP (layers=$LAYERS, bump=$BUMP_AMOUNT -> suffix -$SUFFIX)" || echo "==> Mode:      STANDARD"
-
-# --- generate pre.png via selected generator ---
-if [ "$SWEEP" -eq 1 ]; then
-  # For sweep we still need a pre.png; stage under a temp work dir
-  if [ -d "$WORK_DIR" ]; then rm -rf "$WORK_DIR"; fi
-  mkdir -p "$WORK_DIR"
-
-  case "$GEN" in
-    convert)  "$CONVERT"  "$PROFILE" "$SOURCE_IMAGE" "$PREPNG" ;;
-    gencolor) "$GENCOLOR" "$PROFILE" "$PREPNG" ;;
-    *) echo "Unknown generator: $GEN (expected: convert or gencolor)" >&2; exit 1 ;;
-  esac
-
-  # ---- bump sweep: c, m, y, cm, cy, my, cmy ----
-  combos="c m y cm cy my cmy"
-  for combo in $combos; do
-    bump_c="0.0"; bump_m="0.0"; bump_y="0.0"
-    echo "$combo" | grep -q "c" && bump_c="$BUMP_AMOUNT" || true
-    echo "$combo" | grep -q "m" && bump_m="$BUMP_AMOUNT" || true
-    echo "$combo" | grep -q "y" && bump_y="$BUMP_AMOUNT" || true
-
-    outdir="$PRE_WORK_ROOT/${combo}-${SUFFIX}"
-    echo "==> Halftone ${combo}-${SUFFIX}  (c=$bump_c m=$bump_m y=$bump_y) -> $outdir"
-    rm -rf "$outdir"
-    mkdir -p "$outdir"
-
-    # halftone per layer
-    node "$HALFTONE_JS" "$PREPNG" "$outdir" "$LAYERS" --c="$bump_c" --m="$bump_m" --y="$bump_y"
-
-    # scale each PNG (2x X, point, png24, no interlace)
-    echo "    Scaling PNGs in $outdir"
-    find "$outdir" -type f -name '*.png' -print0 | while IFS= read -r -d '' f; do
-      tmp="${f}.tmp"
-      magick "$f" -filter point -resize 200%x100% -define png:format=png24 -interlace none "$tmp"
-      mv -f "$tmp" "$f"
-    done
-  done
-
-  echo "Done. Outputs in $PRE_WORK_ROOT/<combo>-${SUFFIX}/"
-  exit 0
-fi
-
-# --- STANDARD path (legacy): convert/gencolor -> dither.sh -> scale into $WORK_DIR ---
-# clear destination folder if it exists
-if [ -d "$WORK_DIR" ]; then
-  echo "==> Clearing destination: $WORK_DIR"
-  rm -rf "$WORK_DIR"
-fi
+# --- prepare destination ---
+[ -d "$WORK_DIR" ] && { echo "==> Clearing destination: $WORK_DIR"; rm -rf "$WORK_DIR"; }
 mkdir -p "$WORK_DIR"
 
-case "$GEN" in
-  convert)  "$CONVERT"  "$PROFILE" "$SOURCE_IMAGE" "$PREPNG" ;;
-  gencolor) "$GENCOLOR" "$PROFILE" "$PREPNG" ;;
-  *) echo "Unknown generator: $GEN (expected: convert or gencolor)" >&2; exit 1 ;;
-esac
+echo "==> Profile: $BASE"
+echo "==> Mode:    STANDARD (convert → dither → scale)"
 
-# dither step (existing)
-# dither.sh <input_png> <outdir> <levels>
+# --- convert to pre.png ---
+"$CONVERT" "$PROFILE" "$SOURCE_IMAGE" "$PREPNG"
+
+# --- dither (existing script: dither.sh <input_png> <outdir> <levels>) ---
 "$DITHER" "$PREPNG" "$WORK_DIR" 100
 
-# scale PNGs (2x X, 1x Y), keep sharp (point), compat PNG
+# --- scale PNGs: 2x X, keep sharp (point), png24, no interlace ---
 echo "==> Scaling PNGs in $WORK_DIR"
-find "$WORK_DIR" -type f -name '*.png' -print0 | while IFS= read -r -d '' f; do
+find "$WORK_DIR" -type f -name '*.png' | while IFS= read -r f; do
   tmp="${f}.tmp"
   magick "$f" -filter point -resize 200%x100% -define png:format=png24 -interlace none "$tmp"
   mv -f "$tmp" "$f"
