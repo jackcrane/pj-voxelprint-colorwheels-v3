@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // buildGCVF.js — Usage: node buildGCVF.js <inputDir> <outputName>
-// Creates outputName.gcvf from 100 slices layer_0.png..layer_99.png
+// Produces: <outputName>.gcvf (zip) containing normalized slices, ConfigFile.xml, and gcvf_includes/*
 
 import fs from "fs";
 import path from "path";
@@ -12,9 +12,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 /** ---- constants ---- */
-const EXPECTED_WIDTH = 1000;
-const EXPECTED_HEIGHT = 500;
-const EXPECTED_LAYERS = 100;
 const COLOR_MAP = {
   "0,255,255,255": "VeroCY-V", // Cyan
   "255,0,255,255": "VeroMGT-V", // Magenta
@@ -30,29 +27,96 @@ const err = (msg) => {
 
 const validateDir = (dir) => {
   if (!fs.existsSync(dir)) err(`Directory not found: ${dir}`);
-  const files = fs.readdirSync(dir).filter((f) => f.endsWith(".png"));
-  if (files.length === 0) err("No PNG files found.");
-  return files;
+  const pngs = fs
+    .readdirSync(dir)
+    .filter((f) => f.toLowerCase().endsWith(".png"));
+  if (pngs.length === 0) err("No PNG files found.");
+  return pngs;
 };
 
 const normalizeName = (name) => {
-  const match = name.match(/layer_(\d+)\.png$/i);
-  if (!match) return null;
-  return `layer_${parseInt(match[1])}.png`;
+  const m = name.match(/layer_(\d+)\.png$/i);
+  if (!m) return null;
+  return `layer_${parseInt(m[1], 10)}.png`; // strip zero padding
 };
 
-const countVoxels = async (dir, files) => {
+const collectAndNormalizeLayers = (dir, files) => {
+  const layerFiles = [];
+  const seenTargets = new Set();
+
+  for (const f of files) {
+    const normalized = normalizeName(f);
+    if (!normalized) {
+      console.warn(`⚠️  Ignoring non-layer file: ${f}`);
+      continue;
+    }
+    const src = path.join(dir, f);
+    const dst = path.join(dir, normalized);
+    if (src !== dst) {
+      if (fs.existsSync(dst)) {
+        err(
+          `Normalization collision: ${f} → ${normalized} but ${normalized} already exists. Remove duplicates.`
+        );
+      }
+      fs.renameSync(src, dst);
+    }
+    if (seenTargets.has(normalized)) {
+      err(`Duplicate layer after normalization: ${normalized}`);
+    }
+    seenTargets.add(normalized);
+    layerFiles.push(normalized);
+  }
+
+  // sort by numeric index
+  layerFiles.sort((a, b) => {
+    const na = parseInt(a.match(/\d+/)[0], 10);
+    const nb = parseInt(b.match(/\d+/)[0], 10);
+    return na - nb;
+  });
+
+  if (layerFiles.length === 0) err("No valid layer_*.png files found.");
+
+  // contiguity check: must start at 0 and have no gaps
+  const indices = layerFiles.map((f) => parseInt(f.match(/\d+/)[0], 10));
+  const expected = Array.from({ length: indices.length }, (_, i) => i);
+  const missing = expected.filter((i) => !indices.includes(i));
+  if (indices[0] !== 0 || missing.length) {
+    err(
+      `Layers must start at 0 and be contiguous with no gaps. ` +
+        `Found indices: [${indices.slice(0, 5).join(",")}${
+          indices.length > 5 ? ",..." : ""
+        }] ` +
+        `${missing.length ? `Missing: [${missing.join(", ")}]` : ""}`
+    );
+  }
+
+  return layerFiles;
+};
+
+const probeDimensions = async (dir, firstLayer) => {
+  const fp = path.join(dir, firstLayer);
+  const { info } = await sharp(fp)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  return { width: info.width, height: info.height };
+};
+
+const countVoxels = async (dir, files, expectedW, expectedH) => {
   const totals = {};
   for (const file of files) {
     const fpath = path.join(dir, file);
     const img = sharp(fpath);
     const { data, info } = await img
+      .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
-    if (info.width !== EXPECTED_WIDTH || info.height !== EXPECTED_HEIGHT)
+
+    if (info.width !== expectedW || info.height !== expectedH) {
       err(
-        `Invalid size in ${file}. Expected ${EXPECTED_WIDTH}x${EXPECTED_HEIGHT}`
+        `Invalid size in ${file}. Expected ${expectedW}x${expectedH}, got ${info.width}x${info.height}`
       );
+    }
 
     for (let i = 0; i < data.length; i += 4) {
       const r = data[i],
@@ -61,17 +125,19 @@ const countVoxels = async (dir, files) => {
         a = data[i + 3];
       const key = `${r},${g},${b},${a}`;
       if (key === "0,0,0,255") continue; // ignore black
-      if (!COLOR_MAP[key]) continue;
+      if (!COLOR_MAP[key]) continue; // ignore unknowns
       totals[key] = (totals[key] || 0) + 1;
     }
   }
   return totals;
 };
 
-const writeXML = (totals, outDir) => {
-  const materials = Object.entries(totals)
-    .map(([rgba, count]) => {
-      const name = COLOR_MAP[rgba];
+const writeXML = (totals, outDir, width, height, numLayers) => {
+  // Keep material ordering stable according to COLOR_MAP
+  const materials = Object.entries(COLOR_MAP)
+    .filter(([rgba]) => totals[rgba])
+    .map(([rgba, name]) => {
+      const count = totals[rgba];
       const parts = rgba.split(",").join(" ");
       return `        <Material>
             <Name>${name}</Name>
@@ -91,12 +157,12 @@ const writeXML = (totals, outDir) => {
         <SliceThicknessNanoMeter>27000</SliceThicknessNanoMeter>
     </Resolution>
     <SliceDimensions>
-        <SliceWidth>${EXPECTED_WIDTH}</SliceWidth>
-        <SliceHeight>${EXPECTED_HEIGHT}</SliceHeight>
+        <SliceWidth>${width}</SliceWidth>
+        <SliceHeight>${height}</SliceHeight>
     </SliceDimensions>
     <SliceRange>
         <StartIndex>0</StartIndex>
-        <NumberOfSlices>${EXPECTED_LAYERS}</NumberOfSlices>
+        <NumberOfSlices>${numLayers}</NumberOfSlices>
     </SliceRange>
     <BitDepth>4</BitDepth>
     <MaxNumberOfColors>6</MaxNumberOfColors>
@@ -131,45 +197,26 @@ const main = async () => {
 
   const inputDir = path.resolve(inputDirRaw);
   const outputName = path.resolve(outputNameRaw);
-  const files = validateDir(inputDir);
 
-  const layerFiles = [];
-  for (const f of files) {
-    const normalized = normalizeName(f);
-    if (!normalized) {
-      console.warn(`⚠️  Ignoring non-layer file: ${f}`);
-      continue;
-    }
-    const src = path.join(inputDir, f);
-    const dst = path.join(inputDir, normalized);
-    if (src !== dst) fs.renameSync(src, dst);
-    layerFiles.push(normalized);
-  }
+  // Gather PNGs, normalize valid layer names, and enforce contiguity
+  const pngs = validateDir(inputDir);
+  const layerFiles = collectAndNormalizeLayers(inputDir, pngs);
 
-  layerFiles.sort((a, b) => {
-    const na = parseInt(a.match(/\d+/)[0]);
-    const nb = parseInt(b.match(/\d+/)[0]);
-    return na - nb;
-  });
+  // Infer dimensions from first layer; enforce uniform dimensions across all
+  const { width, height } = await probeDimensions(inputDir, layerFiles[0]);
+  const numLayers = layerFiles.length;
 
-  if (layerFiles.length !== EXPECTED_LAYERS)
-    err(`Expected ${EXPECTED_LAYERS} layers, found ${layerFiles.length}`);
-  if (
-    !layerFiles.includes("layer_0.png") ||
-    !layerFiles.includes("layer_99.png")
-  )
-    err("Layer numbering must start at 0 and end at 99.");
+  console.log(`Detected ${numLayers} layers, dimensions ${width}x${height}.`);
 
   console.log("Counting voxels...");
-  const totals = await countVoxels(inputDir, layerFiles);
+  const totals = await countVoxels(inputDir, layerFiles, width, height);
 
   console.log("Generating ConfigFile.xml...");
   const tempDir = fs.mkdtempSync(path.join(__dirname, "tmp_gcvf_"));
-  writeXML(totals, tempDir);
+  writeXML(totals, tempDir, width, height, numLayers);
 
   console.log("Zipping...");
-  console.log(path.join("gcvf_includes"));
-  const includeDir = path.join("gcvf_includes");
+  const includeDir = path.join(inputDir, "gcvf_includes");
   const includeFiles = fs.existsSync(includeDir)
     ? fs.readdirSync(includeDir).map((f) => ({
         path: path.join(includeDir, f),

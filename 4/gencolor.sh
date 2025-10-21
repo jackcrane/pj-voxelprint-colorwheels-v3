@@ -14,7 +14,7 @@ fi
 
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 
-magick -size 200x100 xc:"#0000FF" \
+magick -size 100x100 xc:"#0000FF" \
   -profile "/System/Library/ColorSync/Profiles/sRGB Profile.icc" \
   -profile "$ICC_PROFILE" \
   "$OUTPUT_IMAGE"

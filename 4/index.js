@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// halftone.js — `node halftone.js in.png out_dir <numLayers>`
+// index.js — `node index.js in.png out_dir <numLayers> [--c=0.1 --m=0.0 --y=0.0 --w=0 --b=0]`
 // Stochastic CMY halftoning for PolyJet. Transparent input → black (void).
-// Bumps are HARD-CODED below. Edit BUMPS to taste.
 
 import fs from "fs";
 import path from "path";
@@ -17,18 +16,7 @@ export const PALETTE = {
   black: "#F0F0F0", // light gray fallback
 };
 
-/** ---- HARD-CODED probability bumps (0..1) ----
- * c,m,y increase chance each channel passes the stochastic test.
- * w lowers the whiteness threshold (more white picked in fallback).
- * b raises the blackness threshold (more black picked in fallback).
- */
-const BUMPS = {
-  c: 0.1,
-  m: 0.1, // ← make magenta a bit stronger
-  y: 0.0,
-  w: 0.0,
-  b: 0.0,
-};
+const DEFAULT_BUMPS = { c: 0.0, m: 0.0, y: 0.0, w: 0.0, b: 0.0 };
 
 const hexToRgb = (hex) => {
   const h = hex.replace("#", "");
@@ -41,8 +29,25 @@ const LUMA = (r, g, b) =>
 
 const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
+const parseBumpsFromArgs = (argv) => {
+  const out = { ...DEFAULT_BUMPS };
+  for (const a of argv) {
+    if (!a.startsWith("--")) continue;
+    const m = a.match(/^--([cmywb])=([-+]?\d*\.?\d+)$/i);
+    if (m) {
+      const key = m[1].toLowerCase();
+      out[key] = Number(m[2]);
+    }
+  }
+  return out;
+};
+
 /** ---- halftoning for a single output image ---- */
-export const halftoneImage = async (inputPath, outputPath) => {
+export const halftoneImage = async (
+  inputPath,
+  outputPath,
+  bumps = DEFAULT_BUMPS
+) => {
   const img = sharp(inputPath, { limitInputPixels: false });
   const { width, height } = await img.metadata();
   const raw = await img.ensureAlpha().raw().toBuffer(); // RGBA
@@ -74,10 +79,10 @@ export const halftoneImage = async (inputPath, outputPath) => {
     const m0 = 1 - gn;
     const y0 = 1 - bn;
 
-    // apply hard-coded probability bumps
-    const c = clamp01(c0 + BUMPS.c);
-    const m = clamp01(m0 + BUMPS.m);
-    const y = clamp01(y0 + BUMPS.y);
+    // apply probability bumps
+    const c = clamp01(c0 + (bumps.c ?? 0));
+    const m = clamp01(m0 + (bumps.m ?? 0));
+    const y = clamp01(y0 + (bumps.y ?? 0));
 
     // stochastic screening
     const passC = Math.random() < c;
@@ -95,9 +100,8 @@ export const halftoneImage = async (inputPath, outputPath) => {
     } else {
       // fallback to white/black with bumps
       const l = LUMA(r, g, b);
-      const whiteThresh = Math.max(0, 0.9 - 0.9 * clamp01(BUMPS.w)); // more w → pick white more often
-      const blackThresh = Math.min(1, 0.1 + 0.9 * clamp01(BUMPS.b)); // more b → pick black more often
-
+      const whiteThresh = Math.max(0, 0.9 - 0.9 * clamp01(bumps.w ?? 0)); // more w → pick white more often
+      const blackThresh = Math.min(1, 0.1 + 0.9 * clamp01(bumps.b ?? 0)); // more b → pick black more often
       if (l > whiteThresh) chosen = "white";
       else if (l < blackThresh) chosen = "black";
       else chosen = "white";
@@ -112,39 +116,45 @@ export const halftoneImage = async (inputPath, outputPath) => {
     .toFile(outputPath);
 };
 
+/** Generate all layers for one setting */
+export const generateLayers = async (
+  inPath,
+  outDir,
+  numLayers,
+  bumps = DEFAULT_BUMPS
+) => {
+  fs.mkdirSync(outDir, { recursive: true });
+  const pad = Math.max(2, String(numLayers - 1).length);
+  for (let i = 0; i < numLayers; i++) {
+    const name = `layer_${String(i).padStart(pad, "0")}.png`;
+    const outPath = path.join(outDir, name);
+    // eslint-disable-next-line no-await-in-loop
+    await halftoneImage(inPath, outPath, bumps);
+  }
+};
+
 /** ---- CLI ---- */
 const main = async () => {
-  const [, , inPath, outDir, layersArg] = process.argv;
+  const [, , inPath, outDir, layersArg, ...rest] = process.argv;
 
   if (!inPath || !outDir || !layersArg) {
     console.error(
-      "Usage: node halftone.js <in.png> <out_dir> <numLayers>\n" +
-        "Edit BUMPS in the source to change channel strength."
+      "Usage: node index.js <in.png> <out_dir> <numLayers> [--c=0.1 --m=0.0 --y=0.0 --w=0 --b=0]"
     );
     process.exit(1);
   }
-
   if (!fs.existsSync(inPath)) {
     console.error(`Input not found: ${inPath}`);
     process.exit(1);
   }
-
   const nLayers = Number(layersArg);
   if (!Number.isInteger(nLayers) || nLayers <= 0) {
     console.error(`Invalid <numLayers>: ${layersArg}`);
     process.exit(1);
   }
 
-  fs.mkdirSync(outDir, { recursive: true });
-
-  // zero-padding: at least 2 digits, or enough for nLayers-1
-  const pad = Math.max(2, String(nLayers - 1).length);
-
-  for (let i = 0; i < nLayers; i++) {
-    const name = `layer_${String(i).padStart(pad, "0")}.png`;
-    const outPath = path.join(outDir, name);
-    await halftoneImage(inPath, outPath);
-  }
+  const bumps = parseBumpsFromArgs(rest);
+  await generateLayers(inPath, outDir, nLayers, bumps);
 };
 
 if (import.meta.url === `file://${process.argv[1]}`) {
