@@ -15,7 +15,7 @@ export const generateColorWheel = (ctx, whiteOnly = false) => {
         // const lightness = whiteOnly ? 1 : 0.5;
         // const lightness = 0;
         // const lightness = 0.5;
-        const lightness = 1 - radius / 250;
+        const lightness = radius > 175 ? 0.5 : 1 - (0.5 * radius) / 175;
         ctx.fillStyle = `hsl(${hue * 360},${1 * 100}%,${lightness * 100}%)`;
         // ctx.fillStyle = `rgb(0,0,0)`;
         ctx.fillRect(col, row, 1, 1);
