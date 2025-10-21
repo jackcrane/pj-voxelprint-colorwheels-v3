@@ -36,6 +36,11 @@ SAFE_NAME=$(printf '%s' "$NAME" | tr ' ' '_' | tr -cd '[:alnum:]_.-')
 OUTDIR="$OUT_ROOT/$SAFE_NAME"
 PREPNG="$OUTDIR/pre.png"
 
+# --- clear destination folder if it exists ---
+if [ -d "$OUTDIR" ]; then
+  echo "==> Clearing destination: $OUTDIR"
+  rm -rf "$OUTDIR"
+fi
 mkdir -p "$OUTDIR"
 
 echo "==> Processing: $BASE"
@@ -44,11 +49,8 @@ echo "==> Processing: $BASE"
 
 echo "==> Scaling PNGs in $OUTDIR"
 if [ -x "./scale" ]; then
-  # Prefer your custom scaler if present
   ./scale "$OUTDIR"
 else
-  # Fallback: double X only, preserve sharp edges (point), force PNG24, no interlace
-  # Safe for filenames with spaces.
   find "$OUTDIR" -type f -name '*.png' -print0 | while IFS= read -r -d '' f; do
     tmp="${f}.tmp"
     magick "$f" -filter point -resize 200%x100% -define png:format=png24 -interlace none "$tmp"
@@ -57,6 +59,6 @@ else
 fi
 
 echo "==> Converting to GCVF"
-node buildGCVF.js "$OUTDIR" "$OUTDIR.gcvf"
+node buildGCVF.js "$OUTDIR" "final"
 
 echo "Done. Output in $OUTDIR"

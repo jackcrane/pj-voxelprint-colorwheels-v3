@@ -23,9 +23,9 @@ export const PALETTE = {
  * b raises the blackness threshold (more black picked in fallback).
  */
 const BUMPS = {
-  c: 0.0,
+  c: 0.1,
   m: 0.1, // ← make magenta a bit stronger
-  y: 0.1,
+  y: 0.0,
   w: 0.0,
   b: 0.0,
 };
