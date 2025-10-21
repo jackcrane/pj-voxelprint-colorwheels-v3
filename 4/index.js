@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // halftone.js — `node halftone.js in.png out_dir <numLayers>`
-// Nondeterministic CMY threshold halftoning for PolyJet printing.
-// Transparent (void) input areas become black pixels in output.
+// Stochastic CMY halftoning for PolyJet. Transparent input → black (void).
+// Bumps are HARD-CODED below. Edit BUMPS to taste.
 
 import fs from "fs";
 import path from "path";
@@ -14,7 +14,20 @@ export const PALETTE = {
   yellow: "#FFFF00",
   white: "#FFFFFF",
   clear: "#000000", // explicitly black for voids
-  black: "#F0F0F0", // light gray
+  black: "#F0F0F0", // light gray fallback
+};
+
+/** ---- HARD-CODED probability bumps (0..1) ----
+ * c,m,y increase chance each channel passes the stochastic test.
+ * w lowers the whiteness threshold (more white picked in fallback).
+ * b raises the blackness threshold (more black picked in fallback).
+ */
+const BUMPS = {
+  c: 0.0,
+  m: 0.1, // ← make magenta a bit stronger
+  y: 0.1,
+  w: 0.0,
+  b: 0.0,
 };
 
 const hexToRgb = (hex) => {
@@ -25,6 +38,8 @@ const hexToRgb = (hex) => {
 
 const LUMA = (r, g, b) =>
   0.2126 * (r / 255) + 0.7152 * (g / 255) + 0.0722 * (b / 255);
+
+const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
 
 /** ---- halftoning for a single output image ---- */
 export const halftoneImage = async (inputPath, outputPath) => {
@@ -55,9 +70,14 @@ export const halftoneImage = async (inputPath, outputPath) => {
     const rn = r / 255,
       gn = g / 255,
       bn = b / 255;
-    const c = 1 - rn;
-    const m = 1 - gn;
-    const y = 1 - bn;
+    const c0 = 1 - rn;
+    const m0 = 1 - gn;
+    const y0 = 1 - bn;
+
+    // apply hard-coded probability bumps
+    const c = clamp01(c0 + BUMPS.c);
+    const m = clamp01(m0 + BUMPS.m);
+    const y = clamp01(y0 + BUMPS.y);
 
     // stochastic screening
     const passC = Math.random() < c;
@@ -73,8 +93,14 @@ export const halftoneImage = async (inputPath, outputPath) => {
     if (candidates.length > 0) {
       chosen = candidates[(Math.random() * candidates.length) | 0];
     } else {
+      // fallback to white/black with bumps
       const l = LUMA(r, g, b);
-      chosen = l > 0.9 ? "white" : l < 0.1 ? "black" : "white";
+      const whiteThresh = Math.max(0, 0.9 - 0.9 * clamp01(BUMPS.w)); // more w → pick white more often
+      const blackThresh = Math.min(1, 0.1 + 0.9 * clamp01(BUMPS.b)); // more b → pick black more often
+
+      if (l > whiteThresh) chosen = "white";
+      else if (l < blackThresh) chosen = "black";
+      else chosen = "white";
     }
 
     const [R, G, B, A] = RGBA[chosen];
@@ -93,7 +119,7 @@ const main = async () => {
   if (!inPath || !outDir || !layersArg) {
     console.error(
       "Usage: node halftone.js <in.png> <out_dir> <numLayers>\n" +
-        "Example: node halftone.js in.png ./out 12"
+        "Edit BUMPS in the source to change channel strength."
     );
     process.exit(1);
   }
@@ -118,8 +144,6 @@ const main = async () => {
     const name = `layer_${String(i).padStart(pad, "0")}.png`;
     const outPath = path.join(outDir, name);
     await halftoneImage(inPath, outPath);
-    // Optional: log progress
-    // console.error(`Wrote ${outPath}`);
   }
 };
 
