@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // index.js — `node index.js in.png out_dir <numLayers> [--c=0.1 --m=0.0 --y=0.0 --w=0 --b=0]`
-// Stochastic CMY halftoning for PolyJet. Transparent input → black (void).
+// Stochastic CMY halftoning for PolyJet.
+// Requirement: full transparency => VOID; partial transparency => CLEAR material; full opacity => color.
 
 import fs from "fs";
 import path from "path";
@@ -12,7 +13,7 @@ export const PALETTE = {
   magenta: "#FF00FF",
   yellow: "#FFFF00",
   white: "#FFFFFF",
-  clear: "#000000", // explicitly black for voids
+  clear: "#898989", // CLEAR material
   black: "#F0F0F0", // light gray fallback
 };
 
@@ -65,9 +66,17 @@ export const halftoneImage = async (
     const b = raw[idx + 2];
     const a = raw[idx + 3];
 
-    if (a < 5) {
-      // transparent = void → black pixel
+    // Transparency handling:
+    // - a === 0     → VOID (true void; render as black pixel)
+    // - 0 < a < 255 → CLEAR material
+    // - a === 255   → proceed with CMY halftoning
+    if (a === 0) {
       out.set([0, 0, 0, 255], idx);
+      continue;
+    }
+    if (a > 0 && a < 255) {
+      const [R, G, B, A] = RGBA.clear;
+      out.set([R, G, B, A], idx);
       continue;
     }
 
