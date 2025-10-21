@@ -14,12 +14,13 @@ export const generateColorWheel = (ctx, whiteOnly = false) => {
         // const lightness = whiteOnly ? 1 : 1 - (0.5 * radius) / 250;
         // const lightness = whiteOnly ? 1 : 0.5;
         // const lightness = 0;
-        const lightness = 0.5;
+        // const lightness = 0.5;
+        const lightness = 1 - radius / 250;
         ctx.fillStyle = `hsl(${hue * 360},${1 * 100}%,${lightness * 100}%)`;
         // ctx.fillStyle = `rgb(0,0,0)`;
         ctx.fillRect(col, row, 1, 1);
       } else {
-        ctx.fillStyle = "#000000";
+        ctx.fillStyle = "#00000000";
         ctx.fillRect(col, row, 1, 1);
       }
     }
