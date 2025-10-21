@@ -1,41 +1,76 @@
-import { cartesianToPolar } from "../lib/cartesianToPolar.js";
+// _/steps/paintSolidColor.js
+
 import { config } from "../config.js";
-import { hueToCmy } from "./hueToCMY.js";
-import { rgbToHsv } from "./rgbToHsv.js";
-const colors = [];
 
-export const paintSolidColor = (ctx, x, y) => {
-  const [, radius] = cartesianToPolar(x, y);
-  if (radius >= 250) {
-    return;
+/**
+ * Stochastic point halftone from **tonal plates**.
+ * Inputs are 16-bit tonals (0..65535). We weight by normalized tonals and draw one material.
+ * Order/availability is driven by config and the plates provided.
+ *
+ * @param {number} i - linear pixel index (row*width + col)
+ * @param {{[k:string]: Uint16Array}} plates - e.g. { C, M, Y, W, K? }
+ * @param {number} max - maximum tonal (e.g., 65535)
+ * @param {object} opts - { gamma (0..1), nearMask?: Uint8Array } for translucency
+ * @returns {string} materialKey - one of "cyan","magenta","yellow","white","clear","black"
+ */
+export const pickMaterialFromPlates = (i, plates, max, opts = {}) => {
+  const { gamma = 0 } = opts;
+
+  // Read effective tonals (normalize 0..1)
+  const tC = plates.C ? plates.C[i] / max : 0;
+  const tM = plates.M ? plates.M[i] / max : 0;
+  const tY = plates.Y ? plates.Y[i] / max : 0;
+  const tK = plates.K ? plates.K[i] / max : 0;
+  const tW = plates.W
+    ? plates.W[i] / max
+    : Math.max(0, 1 - Math.max(tC, tM, tY, tK));
+
+  // Base weights are tonals (you can plug-in your printer screening strategy here)
+  const weights = [];
+  if (tC > 0) weights.push(["cyan", tC]);
+  if (tM > 0) weights.push(["magenta", tM]);
+  if (tY > 0) weights.push(["yellow", tY]);
+  if (tK > 0) weights.push(["black", tK]);
+  if (tW > 0) weights.push(["white", tW]);
+
+  // If nothing, default to clear (air) outside the wheel
+  if (weights.length === 0) return "clear";
+
+  // Translucency control: probabilistically replace **white with clear** based on gamma
+  // (Near-surface prioritization can be layered via a depth-aware gamma schedule in index.js)
+  if (gamma > 0) {
+    for (let w of weights) {
+      if (w[0] === "white") {
+        const u = Math.random();
+        if (u < gamma) w[0] = "clear"; // replace white with clear
+        break;
+      }
+    }
   }
 
-  const color = ctx.getImageData(x, y, 1, 1).data;
-  let colorInHsv = rgbToHsv(...color);
-
-  let [_cyanThreshold, _magentaThreshold, _yellowThreshold] = hueToCmy(
-    colorInHsv[0]
-  );
-  let cyanThreshold = _cyanThreshold ** 2;
-  let magentaThreshold = _magentaThreshold ** 2;
-  let yellowThreshold = _yellowThreshold ** 2;
-
-  // console.log(x, y, [
-  //   colorInHsv,
-  //   [_cyanThreshold, _magentaThreshold, _yellowThreshold],
-  // ]);
-
-  const totalThreshold = cyanThreshold + magentaThreshold + yellowThreshold;
-  // Avoid division by zero; default to cyan when hue data is unavailable.
-  const threshold = totalThreshold > 0 ? Math.random() * totalThreshold : 0;
-  if (threshold < cyanThreshold) {
-    ctx.fillStyle = config.colors.cyan;
-  } else if (threshold < magentaThreshold + cyanThreshold) {
-    ctx.fillStyle = config.colors.magenta;
-  } else {
-    ctx.fillStyle = config.colors.yellow;
+  // Normalize & draw one
+  const sum = weights.reduce((s, [, w]) => s + w, 0) || 1e-9;
+  const u = Math.random() * sum;
+  let acc = 0;
+  for (const [name, w] of weights) {
+    acc += w;
+    if (u <= acc) return name;
   }
-  ctx.fillRect(x, y, 1, 1);
+  return weights[weights.length - 1][0];
+};
 
-  return [colorInHsv, cyanThreshold, magentaThreshold, yellowThreshold];
+/**
+ * Map a material key to an RGB fillStyle (final slice color visualization).
+ * Uses config.colors swatches.
+ */
+export const materialToRGB = (materialKey) => {
+  const map = {
+    cyan: config.colors.cyan,
+    magenta: config.colors.magenta,
+    yellow: config.colors.yellow,
+    black: config.colors.black ?? "#000000",
+    white: config.colors.white,
+    clear: config.colors.clear, // visualize clear as black for slice raster; adjust as needed
+  };
+  return map[materialKey] ?? "#000000";
 };

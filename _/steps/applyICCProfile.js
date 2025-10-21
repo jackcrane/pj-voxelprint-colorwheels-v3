@@ -1,3 +1,5 @@
+// _/steps/applyICCProfile.js
+
 // color-icc.js
 import fs from "fs";
 import path from "path";
@@ -10,7 +12,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, "..");
 
-const resolveProfilePath = (label, rawPath, { baseDir = PROJECT_ROOT } = {}) => {
+const resolveProfilePath = (
+  label,
+  rawPath,
+  { baseDir = PROJECT_ROOT } = {}
+) => {
   const candidate = path.isAbsolute(rawPath)
     ? rawPath
     : path.resolve(baseDir, rawPath);
@@ -57,6 +63,11 @@ const execFileAsync = (cmd, args) =>
 /**
  * Apply ICC transform to the canvas using LittleCMS CLI tools.
  * Prefers lossless TIFF via `tificc`, falls back to `jpgicc`.
+ *
+ * Now also:
+ *  - logs the LCMS output file path
+ *  - logs Sharp metadata (width/height/channels/depth/format)
+ *  - returns { outPath, metadata }
  */
 export const applyICCProfile = async (ctx, canvas) => {
   logProfilePaths();
@@ -73,6 +84,7 @@ export const applyICCProfile = async (ctx, canvas) => {
     fs.writeFileSync(inTiff, inputTiffBuf);
 
     // 2. Try applying ICC with tificc (lossless)
+    let used = "tificc";
     try {
       await execFileAsync("tificc", [
         "-i",
@@ -86,6 +98,7 @@ export const applyICCProfile = async (ctx, canvas) => {
       ]);
     } catch {
       // fallback to jpgicc (lossy)
+      used = "jpgicc";
       const inJpg = path.join(workdir, "in.jpg");
       const outJpg = path.join(workdir, "out.jpg");
       const jpgBuf = await sharp(inputPngBuf)
@@ -102,17 +115,34 @@ export const applyICCProfile = async (ctx, canvas) => {
         inJpg,
         outJpg,
       ]);
-      fs.renameSync(outJpg, outTiff);
+      // normalize name so the rest stays the same
+      fs.copyFileSync(outJpg, outTiff);
     }
 
-    // 3. Convert result → PNG for canvas
-    const outPngBuf = await sharp(outTiff).png().toBuffer();
+    // 2.5. Log output path and metadata (diagnostic)
+    console.log(`[ICC] (${used}) wrote:`, outTiff);
+    const imgProbe = sharp(outTiff);
+    const meta = await imgProbe.metadata();
+    // meta contains: width, height, channels, depth, format, etc.
+    console.log("[ICC] metadata:", meta);
+
+    // 3. Convert result → PNG for canvas (preserve your original behavior)
+    const outPngBuf = await imgProbe.png().toBuffer();
     const img = await loadImage(outPngBuf);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0);
+
+    // Return diagnostics to the caller
+    return { outPath: outTiff, metadata: meta };
   } catch (err) {
     console.error("Error applying ICC profile:", err);
+    return {
+      outPath: null,
+      metadata: null,
+      error: String(err?.message || err),
+    };
   } finally {
+    // keep temp dir cleanup to avoid clutter
     fs.rmSync(workdir, { recursive: true, force: true });
   }
 };

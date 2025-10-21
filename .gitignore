@@ -5,3 +5,7 @@ _/node_modules/
 _/frames/**
 _/layers/**
 perceptual/node_modules/
+slice/package.json
+4/icc-bw
+4/icc-fw
+4/no-icc

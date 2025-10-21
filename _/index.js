@@ -1,3 +1,5 @@
+// _/index.js
+
 import { createCanvas } from "canvas";
 import { config } from "./config.js";
 import { writeFileSync } from "fs";
@@ -22,7 +24,7 @@ export const saveCanvas = async (
   const { iccProfilePath = SRGB_PROFILE_PATH } = options;
   const buf = suppliedCanvas.toBuffer("image/png");
 
-  // Apply the ICC profile using sharp
+  // Apply the ICC profile using sharp (tagging for previews only)
   const tagged = await sharp(buf)
     .withMetadata({ icc: iccProfilePath })
     .png()
@@ -43,14 +45,18 @@ for (let i = 0; i < 100; i++) {
 
   // Generate a new color wheel.
   generateColorWheel(ctx, i < 38);
-  // Optionally, save the generated wheel:
   if (i === 0) {
     await saveCanvas(`1-generated-${i}`);
   }
 
-  // Apply the ICC profile.
-  await applyICCProfile(ctx, canvas);
-  // Optionally, save the ICC–corrected wheel:
+  // Apply the ICC profile (now returns diagnostics)
+  const diag = await applyICCProfile(ctx, canvas);
+  if (i === 0) {
+    console.log(
+      `[ICC] first-hit summary: channels=${diag?.metadata?.channels}, depth=${diag?.metadata?.depth}, format=${diag?.metadata?.format}`
+    );
+    // If channels === 3, you're still in RGB (not separations). That's the thing we’ll fix next.
+  }
   if (i === 0) {
     await saveCanvas(`2-icc-${i}`, "frames", canvas, {
       iccProfilePath: PRINTER_PROFILE_PATH,
@@ -59,7 +65,6 @@ for (let i = 0; i < 100; i++) {
 
   // Crop the color wheel.
   cropColorWheel(ctx);
-  // Optionally, save the cropped wheel:
   if (i === 0) {
     await saveCanvas(`3-cropped-${i}`);
   }
@@ -77,7 +82,6 @@ for (let i = 0; i < 100; i++) {
       wideCtx.fillRect(col * 2, row, 2, 1);
     }
   }
-  // writeFileSync(`./frames/dithered-${i}.json`, JSON.stringify(ditheredColors));
 
   if (i === 0) {
     await saveCanvas(`4-dithered-${i}`);
@@ -86,16 +90,9 @@ for (let i = 0; i < 100; i++) {
     await saveCanvas(`5-scale-${i}`, "frames", wideCanvas);
   }
 
-  // for (let f = 0; f < 100; f += 25) {
-  //   const frameName = (i + f).toString().padStart(4, "0");
-  //   saveCanvas(frameName, "layers", wideCanvas);
-  // }
   const frameName = i.toString().padStart(4, "0");
   await saveCanvas("layer_" + frameName, "layers", wideCanvas);
 
   const endTime = performance.now();
   console.log(i, endTime - startTime);
 }
-
-// saveCanvas("final");
-// check();
