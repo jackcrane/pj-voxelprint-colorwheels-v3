@@ -28,7 +28,7 @@ COLOR="#${HEX_UPPER}"
 
 mkdir -p "$(dirname "$OUTPUT_IMAGE")"
 
-magick -size 100x100 xc:"$COLOR" \
+magick -size 500x100 xc:"$COLOR" \
   -profile "/System/Library/ColorSync/Profiles/sRGB Profile.icc" \
   -profile "$ICC_PROFILE" \
   "$OUTPUT_IMAGE"

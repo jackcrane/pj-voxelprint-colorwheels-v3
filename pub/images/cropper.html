@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <style>
+      * {
+        margin: 0px;
+        padding: 0px;
+        gap: 0px;
+      }
+      img {
+        height: 866px;
+        width: calc(1168px / 2);
+        object-fit: cover;
+      }
+      .raw {
+        object-position: left;
+      }
+      .blended {
+        object-position: right;
+        margin-left: -4px;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="preview-raw-full.png" class="raw" />
+    <img src="preview-blended-full.png" class="blended" />
+  </body>
+</html>
